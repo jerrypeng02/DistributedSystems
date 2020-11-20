@@ -199,12 +199,12 @@ public class LFD {
                 this.lfd.setLFDId(lfd_ID);
                 System.out.println("LFD assigned LFD ID by GFD " + lfd_ID);
                 while(true) {
-                    synchronized (lock) {
-                        while (lfd.getCurrServerPort() == -1) {
-                            lock.wait();
-                        }
-                    }
                     if (this.lfd.getServerConnected() == true && this.lfd.getGFDNoticed() == false) {
+                        synchronized (lock) {
+                            while (lfd.getCurrServerPort() == -1) {
+                                lock.wait();
+                            }
+                        }
                         out.writeUTF("LFD" + lfd_ID + " on " + lfd.getCurrServerPort() + " :add replica S" + lfd_ID);
                         System.out.println("LFD" + lfd_ID + " on " + lfd.getCurrServerPort() + " :add replica S" + lfd_ID);
                         this.lfd.setGFDNoticed();
