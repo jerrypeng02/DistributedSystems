@@ -14,23 +14,42 @@ public class Server {
     ServerSocket server;
     HashMap<String, Integer> map;
     ReentrantLock lock;
+    Set<String> passiveLock;
+    Set<String> logs;
+
     static String serverName;
     static int checkpointNum;
     private static Deque<Integer> serverQueue;
     private static volatile Integer dsStatus = -1; // default -1, passive 0, active 1
     private static int isReady = 0;
+    private int messageNum = 0;
+    private int targetNum;
 
     public Server() {
         checkpointNum = 0;
         map = new HashMap<String, Integer>();
         lock = new ReentrantLock();
+        passiveLock = new HashSet<>();
         serverName = null;
         serverQueue = new ConcurrentLinkedDeque<>();
+        logs = new HashSet<>();
     }
 
-    void setServerName(String servernName) {
+    public void setServerName(String servernName) {
         this.serverName = servernName;
     }
+
+    public void increaseMessageNum() {
+        this.messageNum++;
+        if (this.messageNum == this.targetNum) {
+            synchronized (passiveLock) {
+                passiveLock.notify();
+            }
+            this.messageNum = 0;
+        }
+    }
+
+    public void setTargetNum(int val) { this.targetNum = val; }
 
     String getServerName() {
         return this.serverName;
@@ -42,6 +61,7 @@ public class Server {
         int lfdPortNumber = Integer.parseInt(args[2]);
         Server serverWrapper = new Server();
         int checkpointFreq = Integer.parseInt(args[3]);
+        serverWrapper.setTargetNum(checkpointFreq);
 
         try {
 
@@ -176,7 +196,7 @@ public class Server {
                     } else {
                         replicaManagerRun(lines[1]);
                     }
-                } catch (IOException e) {
+                } catch (IOException | InterruptedException e) {
                     if (currConnect == null || (currConnect.equals("S") && dsStatus == 0)) {
                         System.out.println("Lost connection to " + this.client);
                     }
@@ -187,24 +207,29 @@ public class Server {
 
         private void clientRun(String line, DataOutputStream out) throws IOException {
             if (!line.equals("Connection request")) {
-                String message = line.split("\\|")[1];
-                System.out.println(this.serverWrapper.getServerName() + " received message: " + line);
-                this.serverWrapper.lock.lock();
-                this.serverWrapper.map.put(message , this.serverWrapper.map.getOrDefault(message , 0) + 1);
-                this.serverWrapper.lock.unlock();
-                System.out.println("my state: " + this.serverWrapper.map);
                 if (isReady == 1) {
+                    String message = line.split("\\|")[1];
+                    System.out.println(this.serverWrapper.getServerName() + " received message: " + line);
+                    this.serverWrapper.lock.lock();
+                    this.serverWrapper.map.put(message , this.serverWrapper.map.getOrDefault(message , 0) + 1);
+                    this.serverWrapper.increaseMessageNum();
+                    this.serverWrapper.lock.unlock();
+                    System.out.println("my state: " + this.serverWrapper.map);
                     System.out.println(this.client + line);
                     out.writeUTF(this.serverWrapper.getServerName() + ": " + line);
+                } else {
+                    synchronized (serverWrapper.logs) {
+                        serverWrapper.logs.add(line);
+                    }
                 }
+
             } else {
                 System.out.println(this.client + line);
-                //out.writeUTF(this.serverWrapper.getServerName() + " received: " + line);
                 out.writeUTF(this.serverWrapper.getServerName() + " Connected. Status: " + isReady);
             }
         }
 
-        private void serverRun(String line) {
+        private void serverRun(String line) throws InterruptedException {
             if(!line.equals("Connection request")) {
                 String[] messages = line.split(", ");
                 int passInCkptNum = Integer.parseInt(messages[0]) + 1;
@@ -213,6 +238,7 @@ public class Server {
                     System.out.println("Checkpoint Num: " + checkpointNum);
                     this.serverWrapper.lock.lock();
                     serverWrapper.map.clear();
+
                     for (int i = 1; i < messages.length; i++) {
                         String curr = messages[i];
                         String[] mapData = curr.split("=");
@@ -221,8 +247,12 @@ public class Server {
                         } else {
                             serverWrapper.map.put(mapData[0], serverWrapper.map.getOrDefault(mapData[0], 0) + Integer.parseInt(mapData[1]));
                         }
-                        //serverWrapper.map.put(mapData[0], Integer.parseInt(mapData[1]));
                     }
+                    Thread.sleep(300); // make sure executed the client message.
+                    synchronized (serverWrapper.logs) {
+                        serverWrapper.logs.clear();
+                    }
+
                     this.serverWrapper.lock.unlock();
                     System.out.println("Update State: " + serverWrapper.map.toString());
                     synchronized (dsStatus) {
@@ -241,6 +271,18 @@ public class Server {
                 String[] messages = line.split(" ");
                 if (Integer.parseInt(messages[0]) == 1 || dsStatus == 0) {
                     isReady = 1;
+                    synchronized (serverWrapper.logs) {
+                        if (!serverWrapper.logs.isEmpty()) {
+                            for (String s : serverWrapper.logs) {
+                                String message = s.split("\\|")[1];
+                                this.serverWrapper.lock.lock();
+                                this.serverWrapper.map.put(message , this.serverWrapper.map.getOrDefault(message , 0) + 1);
+                                this.serverWrapper.increaseMessageNum();
+                                this.serverWrapper.lock.unlock();
+                            }
+                            serverWrapper.logs.clear();
+                        }
+                    }
                 }
                 synchronized (serverQue) {
                     for (int i = 1; i < messages.length; i++) {
@@ -326,6 +368,8 @@ public class Server {
         public void run() {
             try {
                 while (true) {
+
+
                     String state = serverWrapper.map.toString();
                     state = state.replaceAll("\\{", "").replaceAll("\\}", "");
                     state = "S::" + checkpointNum + ", " + state;
@@ -344,9 +388,14 @@ public class Server {
                         checkpointNum++;
                         System.out.println("Checkpoint Num: " + checkpointNum + " " + serverWrapper.map.toString());
                     }
+
                     if (dsStatus == 0) {
-                        Thread.sleep(this.checkpointFreq);
+                        synchronized (serverWrapper.passiveLock) {
+                            serverWrapper.passiveLock.wait();
+                        }
                     }
+
+
                     if (dsStatus == 1) {
                         synchronized (inputSet) {
                             inputSet.wait();
