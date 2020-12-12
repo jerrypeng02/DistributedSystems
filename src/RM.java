@@ -7,22 +7,121 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.PriorityQueue;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.lang.Process;
+import java.lang.ProcessBuilder;
+import java.lang.reflect.Field;
+
 
 public class RM {
     public static boolean isActive = false;
     public static List<ServerInfo> membership = new ArrayList<>();
     public static int mode = 0;
+    public static int autoRecovery = 0;
     public static ServerInfo primaryServer = null;
+    public static final String[] GFD_CONFIGURATION = new String[] {"java", "GFD"};
+    public static final String[] LFD1_CONFIGURATION = new String[] {"java", "LFD", "127.0.0.1", "5050", "4000"};
+    public static final String[] LFD2_CONFIGURATION = new String[] {"java", "LFD", "127.0.0.1", "5050", "4002"};
+    public static final String[] LFD3_CONFIGURATION = new String[] {"java", "LFD", "127.0.0.1", "5050", "4004"};
+    public static final String[][] Server_CONFIGURATION = new String[][] { {"java", "Server", "5056", "127.0.0.1", "4000", "3"},
+            {"java", "Server", "5058", "127.0.0.1", "4002", "3"},
+            {"java", "Server", "5060", "127.0.0.1", "4004", "3"},
+    };
+
+
+    public static synchronized long getPidOfProcess(Process p) {
+        long pid = -1;
+        try {
+            Field f = p.getClass().getDeclaredField("pid");
+            f.setAccessible(true);
+            pid = f.getLong(p);
+            f.setAccessible(false);
+        } catch (Exception e) {
+            e.printStackTrace();
+            pid = -1;
+        }
+        return pid;
+    }
+
+    public static void startSystem() {
+        try {
+            Thread.sleep(1000);
+            ProcessBuilder pb = new ProcessBuilder(GFD_CONFIGURATION);
+            pb.inheritIO();
+            Process process = pb.start();
+            long pid = RM.getPidOfProcess(process);
+            System.out.printf("GFD pid = %d\n", pid);
+
+            Thread.sleep(500);
+            pb = new ProcessBuilder(LFD1_CONFIGURATION);
+            pb.inheritIO();
+            process = pb.start();
+            pid = RM.getPidOfProcess(process);
+            System.out.printf("LFD1 pid = %d\n", pid);
+
+
+            Thread.sleep(500);
+            pb = new ProcessBuilder(LFD2_CONFIGURATION);
+            pb.inheritIO();
+            process = pb.start();
+            pid = RM.getPidOfProcess(process);
+            System.out.printf("LFD2 pid = %d\n", pid);
+
+            Thread.sleep(500);
+            pb = new ProcessBuilder(LFD3_CONFIGURATION);
+            pb.inheritIO();
+            process = pb.start();
+            pid = RM.getPidOfProcess(process);
+            System.out.printf("LFD3 pid = %d\n", pid);
+            Thread.sleep(2000);
+
+            pb = new ProcessBuilder(Server_CONFIGURATION[0]);
+            pb.inheritIO();
+            process = pb.start();
+            pid = RM.getPidOfProcess(process);
+            System.out.printf("Server1 pid = %d\n", pid);
+            Thread.sleep(1000);
+
+            pb = new ProcessBuilder(Server_CONFIGURATION[1]);
+            pb.inheritIO();
+            process = pb.start();
+            pid = RM.getPidOfProcess(process);
+            System.out.printf("Server2 pid = %d\n", pid);
+            Thread.sleep(1000);
+
+            pb = new ProcessBuilder(Server_CONFIGURATION[2]);
+            pb.inheritIO();
+            process = pb.start();
+            pid = RM.getPidOfProcess(process);
+            System.out.printf("Server3 pid = %d\n", pid);
+            Thread.sleep(1000);
+
+        } catch (Exception e) {
+            System.out.println("Start GFD, LFD, Server Failed");
+            e.printStackTrace();
+        }
+    }
 
     public static void main(String[] args) throws IOException {
         System.out.println("Replica Manager started");
+        System.err.close();
+        System.setErr(System.out);
         int serverPortNum = Integer.parseInt(args[0]);
         mode = Integer.parseInt(args[1]);
+        autoRecovery = Integer.parseInt(args[2]);
         if(mode == 1) {
             System.out.println("Choosing active mode");
             isActive = true;
         } else {
             System.out.println("Choosing passive mode");
+        }
+        if (autoRecovery == 1) {
+            System.out.println("Choosing auto recovery mode");
+        } else {
+            System.out.println("Choosing manual recovery mode");
         }
         ServerSocket socket = null;
         try {
@@ -30,12 +129,14 @@ public class RM {
         } catch (IOException e) {
             System.out.println("Failed to initialize Replica Manager");
         }
-
+        StartSystemThread startSystemThread = new StartSystemThread();
+        Thread t1 = new Thread(startSystemThread);
+        t1.start();
         while(true) {
             try {
                 GFDHandler handler = new GFDHandler(socket.accept());
-                Thread t = new Thread(handler);
-                t.start();
+                Thread t2 = new Thread(handler);
+                t2.start();
             } catch (IOException e) {
                 socket.close();
             }
@@ -168,6 +269,16 @@ public class RM {
                             currMember.append(" S").append(serverInfo.serverID);
                         }
                         System.out.println("RM: " + membership.size() + " member:" + currMember);
+                        if (autoRecovery == 1) {
+                            System.out.printf("System tries to restart server %d in auto recovery mode\n", port);
+                            for (String [] configuration : Server_CONFIGURATION) {
+                                if (Integer.valueOf(configuration[2]).equals(port)) {
+                                    AutoRecovery autoRecovery = new AutoRecovery(configuration);
+                                    Thread t1 = new Thread(autoRecovery);
+                                    t1.start();
+                                }
+                            }
+                        }
                     } else {
                         System.out.println("RM: 0 members");
                     }
@@ -206,6 +317,37 @@ public class RM {
                     System.out.println("Failed to connect server from RM " + port);
                 }
             }
+        }
+    }
+
+    public static class AutoRecovery extends Thread {
+        String[] configuration;
+        public AutoRecovery(String[] configuration) {
+            this.configuration = configuration;
+        }
+        @Override
+        public void run() {
+            try {
+                Thread.sleep(1000);
+                ProcessBuilder pb = new ProcessBuilder(this.configuration);
+                pb.inheritIO();
+                Process process = pb.start();
+                long pid = RM.getPidOfProcess(process);
+                System.out.printf("Recoverd Server %s pid = %d\n", this.configuration[2], pid);
+
+            } catch (Exception e) {
+                System.out.printf("Recover server %s fialed \n", this.configuration[2]);
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static class StartSystemThread extends Thread {
+        public StartSystemThread() {
+        }
+        @Override
+        public void run() {
+            RM.startSystem();
         }
     }
 

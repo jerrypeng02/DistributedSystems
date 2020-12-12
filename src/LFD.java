@@ -90,6 +90,20 @@ public class LFD {
         heartBeatWithServerHandlerThread.start();
     }
 
+    public static void startLFD(String[] args) throws InterruptedException {
+        String gfdAdresss = args[0];
+        int gfdPortNum = Integer.parseInt(args[1]);
+        int listenPort = Integer.parseInt(args[2]);
+        LFD lfd = new LFD();
+        List lock = new ArrayList<>();
+        HeartBeatWithGFDHandler heartBeatWithGFDHandler = new HeartBeatWithGFDHandler(gfdAdresss, gfdPortNum, GFD_HEARTBEAT_FREQUENCY, GFD_HEARTBEAT_FREQUENCY, lfd, lock);
+        Thread heartBeatWithGFDThread = new Thread(heartBeatWithGFDHandler);
+        heartBeatWithGFDThread.start();
+        HeartBeatWithServerHandler heartBeatWithServerHandler = new HeartBeatWithServerHandler(listenPort, GFD_HEARTBEAT_FREQUENCY, GFD_HEARTBEAT_FREQUENCY, lfd, lock);
+        Thread heartBeatWithServerHandlerThread = new Thread(heartBeatWithServerHandler);
+        heartBeatWithServerHandlerThread.start();
+    }
+
     private static class HeartBeatWithServerHandler extends Thread {
         private long heartbeatSeq = 1;
         private int port;

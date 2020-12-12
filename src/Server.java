@@ -55,6 +55,67 @@ public class Server {
         return this.serverName;
     }
 
+    public static void startServer(String[] args) throws IOException {
+        int serverPortNum = Integer.parseInt(args[0]);
+        String lfdAdresss= args[1];
+        int lfdPortNumber = Integer.parseInt(args[2]);
+        Server serverWrapper = new Server();
+        int checkpointFreq = Integer.parseInt(args[3]);
+        serverWrapper.setTargetNum(checkpointFreq);
+
+        try {
+
+            Socket lfdSocket = new Socket(lfdAdresss, lfdPortNumber);
+            DataInputStream htbtLfdIn = new DataInputStream(lfdSocket.getInputStream());
+            DataOutputStream htbtLfdOut = new DataOutputStream(lfdSocket.getOutputStream());
+            String line = htbtLfdIn.readUTF();
+            System.out.println(line + " from LFD address " + lfdAdresss + " port " + lfdPortNumber);
+            String[] lineStrings = line.split(" ");
+            String lfdId = lineStrings[0];
+            dsStatus = Integer.parseInt(lineStrings[4]);
+            serverWrapper.setServerName("Server_" + lfdId.split("_")[1]);
+            long sequenceNumber = Long.parseLong(lineStrings[2]);
+            htbtLfdOut.writeUTF(serverWrapper.getServerName() + " receive heartbeats " + sequenceNumber + " address " + serverPortNum);
+
+            HeartBeatWithLFDHandler heartBeatWithLFDHandler = new HeartBeatWithLFDHandler(lfdAdresss, lfdPortNumber, serverWrapper, htbtLfdIn, htbtLfdOut);
+            Thread heartBeatWithLFDThread = new Thread(heartBeatWithLFDHandler);
+            heartBeatWithLFDThread.start();
+            if (dsStatus == -1) {
+                System.out.println("Mode unset.");
+                return;
+            }
+
+            serverWrapper.server = new ServerSocket(serverPortNum);
+            System.out.println("Server starts with port " + serverPortNum);
+            Set<Deque<String>> inputQueue = new HashSet<>();
+
+            MakeConnectionThread mkConn = new MakeConnectionThread(serverQueue, inputQueue);
+            Thread mkConnThread = new Thread(mkConn);
+            mkConnThread.start();
+
+            CheckpointThread ckpt = new CheckpointThread(checkpointFreq, inputQueue, serverWrapper);
+            Thread ckptThread = new Thread(ckpt);
+            ckptThread.start();
+
+
+        } catch(IOException e) {
+            System.out.println("Could not listen on port");
+            System.exit(-1);
+        }
+
+        while (true) {
+            try {
+                ClientHandler cw = new ClientHandler(serverWrapper.server.accept(), serverWrapper, serverQueue);
+                Thread t = new Thread(cw);
+                t.start();
+
+            } catch (Exception e) {
+                serverWrapper.server.close();
+                e.printStackTrace();
+            }
+        }
+    }
+
     public static void main(String[] args) throws IOException {
         int serverPortNum = Integer.parseInt(args[0]);
         String lfdAdresss= args[1];

@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
+
 public class GFD {
     private static ServerSocket gfd;
     private static Socket rm;
@@ -8,7 +9,7 @@ public class GFD {
     private static List<String> serverList = new LinkedList<>();
     private volatile static int dsState = -1;
 
-    public static void main(String[] args) throws IOException {
+    public static void startGFD() throws IOException {
         boolean isConn = false;
         DataOutputStream rmStream = null;
         while (!isConn) {
@@ -54,6 +55,9 @@ public class GFD {
         }
     }
 
+    public static void main(String[] args) throws IOException {
+        GFD.startGFD();
+    }
 
     // ClientHandler class
     private static class ClientHandler extends Thread {
