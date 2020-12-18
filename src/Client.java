@@ -10,9 +10,10 @@ public class Client {
         BufferedReader sysReadIn = new BufferedReader(new InputStreamReader(System.in));
         Set<String> stateSet = new HashSet<>();
         String clientName = args[0];
+        int sleepTime = Integer.parseInt(args[1]);
         int requestNum = 0;
 
-        for (int i = 1; i < args.length; i++) {
+        for (int i = 2; i < args.length; i++) {
             String input = args[i];
             int port = Integer.parseInt(input);
             ServerHandler server = new ServerHandler("127.0.0.1", port, "Connection request", stateSet);
@@ -22,9 +23,14 @@ public class Client {
 
         // keep reading until "Over" is input
         String line = "";
+        int number = 0;
         while (!line.equals("Over")) {
             try {
-                line = sysReadIn.readLine();
+                //line = sysReadIn.readLine();
+                Thread.sleep(sleepTime);
+                number++;
+                int ttt = number % 3;
+                line = clientName + " m" + ttt;
                 if (line == null || line.equals("")) continue;
                 requestNum++;
                 StringBuilder sb = new StringBuilder();
@@ -42,7 +48,7 @@ public class Client {
                     Thread t = new Thread(server);
                     t.start();
                 }
-            } catch (IOException e) {
+            } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
